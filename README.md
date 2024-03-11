@@ -1,0 +1,1 @@
+The goal is to find potential winning offensive strategies in baseball. In order to do this, I want to use data that shows strategies rather than just pure phsyical capabilities. So, the project looks at tendencies, strengths, weaknesses, and decision making.
