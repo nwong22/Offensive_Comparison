@@ -1,0 +1,942 @@
+---
+title: "Saint Louis University Offensive Comparison"
+author: "Nicholas Wong"
+date: ""
+output:
+  html_document:
+    code_folding: hide
+    fontsize: 12pt
+    toc: true
+    toc_float: true
+geometry: margin0.5cm
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidymodels)
+library(stringr)
+library(janitor)
+library(knitr)
+```
+
+
+```{r}
+# Loading and cleaning data
+ucsb_data <- read.csv('UCSB_pitchlog.csv')
+ucsb_data <- clean_names(ucsb_data)
+ucsb_data <- filter(ucsb_data, pitch_result != "")
+ucsb_data$inning <- as.numeric(str_split_i(ucsb_data$inn, " ", -1))
+
+team_data <- read.csv('STLouis_pitchlog.csv')
+team_data <- clean_names(team_data)
+team_data <- filter(team_data, pitch_result != "")
+team_data$inning <- as.numeric(str_split_i(team_data$inn, " ", -1))
+
+
+# Splitting UCSB data
+sb_rbi_pitches <- filter(ucsb_data, runs != 0)
+
+sb_two_strikes <- ucsb_data[grep('-2', ucsb_data$count), ]
+sb_first_pitch <- ucsb_data[grep('0-0', ucsb_data$count), ]
+
+sb_swings <- ucsb_data[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", ucsb_data$pitch_result), ]
+sb_misses <- ucsb_data[grep("Swinging|Missed", ucsb_data$pitch_result), ]
+sb_takes <- filter(ucsb_data, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+sb_no_runners <- filter(ucsb_data, man_on1st == 0 & man_on2nd == 0 & man_on3rd == 0)
+sb_scoring_pos <- filter(ucsb_data, man_on2nd == 1 | man_on3rd == 1)
+
+sb_no_outs <- filter(ucsb_data, outs == 0)
+sb_two_outs <- filter(ucsb_data, outs == 2)
+
+
+# Splitting other team data
+rbi_pitches <- filter(team_data, runs != 0)
+
+two_strikes <- team_data[grep('-2', team_data$count), ]
+first_pitch <- team_data[grep('0-0', team_data$count), ]
+
+swings <- team_data[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", team_data$pitch_result), ]
+misses <- team_data[grep("Swinging|Missed", team_data$pitch_result), ]
+takes <- filter(team_data, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+no_runners <- filter(team_data, man_on1st == 0 & man_on2nd == 0 & man_on3rd == 0)
+scoring_pos <- filter(team_data, man_on2nd == 1 | man_on3rd == 1)
+
+no_outs <- filter(team_data, outs == 0)
+two_outs <- filter(team_data, outs == 2)
+
+
+# Function to generate metrics
+generate_stats <- function(sit) {
+  sit_s <- sit[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sit$pitch_result), ]
+  sit_w <- sit[grep("Swinging|Missed", sit$pitch_result), ]
+  sit_t <- filter(sit, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+  
+  swing_perc <- (count(sit_s)/count(sit))*100
+  take_perc <- (count(sit_t)/count(sit))*100
+  whiff_perc <- (count(sit_w)/count(sit_s))*100
+  
+  sit_off <- filter(sit, px_norm < -1 | px_norm > 1 | pz_norm < -1 | pz_norm > 1)
+  chase_perc <- (count(sit_off[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", x = sit_off$pitch_result), ])/count(sit_off))*100
+  
+  sit_in <- filter(sit, px_norm >= -1 & px_norm <= 1 & pz_norm >= -1 & pz_norm <= 1)
+  sit_ins <- sit_in[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sit_in$pitch_result), ]
+  inzone_swing_perc <- (count(sit_ins)/count(sit_in))*100
+  inzone_whiff_perc <- (count(sit_in[grep("Swinging|Missed", sit_in$pitch_result), ])/count(sit_ins))*100
+  return (c(swing_perc, take_perc, whiff_perc, chase_perc, inzone_swing_perc, inzone_whiff_perc))
+}
+
+### d = data, t = type, n = title, c = color
+generate_zone <- function(d, t, n, c){
+  if(count(filter(d, type == t)) > 1) {
+  ggplot(filter(d, type == t), aes(x = px_norm, y = pz_norm)) +
+  geom_density_2d(color = 'blue', alpha = 0.3, linewidth=0.7) +
+  labs(title = n,
+       x = "Normalized Ball X Axis Location",
+       y = "Normalized Ball Z Axis Location") +
+  theme_minimal() +
+  scale_x_continuous(limits=c(-4,4), breaks=seq(-4,4,1)) + 
+  scale_y_continuous(limits=c(-4,4), breaks=seq(-4,4,1)) +
+  coord_fixed(ratio = 25.2/22.82) +
+  geom_point(aes(x = px_norm, y = pz_norm), color = c, size = 1, alpha = 0.6) +
+  geom_segment(aes(x =-1, y = -1, xend = 1, yend = -1)) +
+  geom_segment(aes(x =-1, y = -1, xend = -1, yend = 1)) +
+  geom_segment(aes(x =-1, y = 1, xend = 1, yend = 1)) +
+  geom_segment(aes(x =1, y = -1, xend = 1, yend = 1))
+  } else {
+    ggplot(filter(d, type == t), aes(x = px_norm, y = pz_norm)) +
+    labs(title = n,
+         x = "Normalized Ball X Axis Location",
+         y = "Normalized Ball Z Axis Location") +
+    theme_minimal() +
+    scale_x_continuous(limits=c(-4,4), breaks=seq(-4,4,1)) + 
+    scale_y_continuous(limits=c(-4,4), breaks=seq(-4,4,1)) +
+    coord_fixed(ratio = 25.2/22.82) +
+    geom_point(aes(x = px_norm, y = pz_norm), color = c, size = 1, alpha = 0.6) +
+    geom_segment(aes(x =-1, y = -1, xend = 1, yend = -1)) +
+    geom_segment(aes(x =-1, y = -1, xend = -1, yend = 1)) +
+    geom_segment(aes(x =-1, y = 1, xend = 1, yend = 1)) +
+    geom_segment(aes(x =1, y = -1, xend = 1, yend = 1))
+  }
+}
+
+stats_by_pitch <- function(sit) {
+  fb <- filter(sit, type=="Fastball")
+  cb <- filter(sit, type=="Curveball")
+  sl <- filter(sit, type=="Slider")
+  ch <- filter(sit, type=="Changeup")
+  si <- filter(sit, type=="Sinker")
+  
+  fb_stats <- generate_stats(fb)
+  cb_stats <- generate_stats(cb)
+  sl_stats <- generate_stats(sl)
+  ch_stats <- generate_stats(ch)
+  si_stats <- generate_stats(sl)
+  return (c(fb_stats, cb_stats, sl_stats, ch_stats, si_stats))
+}
+
+  generate_stats <- function(sit) {
+  sit_s <- sit[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sit$pitch_result), ]
+  sit_w <- sit[grep("Swinging|Missed", sit$pitch_result), ]
+  sit_t <- filter(sit, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+  
+  swing_perc <- (count(sit_s)/count(sit))*100
+  take_perc <- (count(sit_t)/count(sit))*100
+  whiff_perc <- (count(sit_w)/count(sit_s))*100
+  
+  sit_off <- filter(sit, px_norm < -1 | px_norm > 1 | pz_norm < -1 | pz_norm > 1)
+  chase_perc <- (count(sit_off[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", x = sit_off$pitch_result), ])/count(sit_off))*100
+  
+  sit_in <- filter(sit, px_norm >= -1 & px_norm <= 1 & pz_norm >= -1 & pz_norm <= 1)
+  sit_ins <- sit_in[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sit_in$pitch_result), ]
+  inzone_swing_perc <- (count(sit_ins)/count(sit_in))*100
+  inzone_whiff_perc <- (count(sit_in[grep("Swinging|Missed", sit_in$pitch_result), ])/count(sit_ins))*100
+  return (c(swing_perc, take_perc, whiff_perc, chase_perc, inzone_swing_perc, inzone_whiff_perc))
+}
+```
+
+```{r}
+generate_pitch_stats <- function(sit) {
+  outcomes <- c("Ball", "Foul", "Strike Looking", "Strike Swinging", "Ground Out", "Walk", "Strikeout (Swinging)", "Strike (Swinging)")
+  
+  pitch_results <- list()
+
+  for (pitch_type in unique(sit$type)) {
+    sit_pitch <- sit[sit$type == pitch_type, ]
+    
+    pitch_perc <- numeric(length(outcomes))
+    
+    for (i in seq_along(outcomes)) {
+      outcome <- outcomes[i]
+      count_outcome <- sum(sit_pitch$pitch_result == outcome, na.rm = TRUE)
+      pitch_perc[i] <- round((count_outcome / nrow(sit_pitch)) * 100, 2)
+    }
+    
+    pitch_results[[pitch_type]] <- pitch_perc
+  }
+  
+  pitch_stats <- data.frame(
+    Pitch_Type = names(pitch_results),
+    t(matrix(unlist(pitch_results), nrow = length(outcomes), byrow = TRUE))
+  )
+  colnames(pitch_stats)[-1] <- outcomes
+  
+  return(pitch_stats)
+}
+
+pitch_stats_table <- generate_pitch_stats(ucsb_data)
+print(pitch_stats_table)
+```
+
+
+## Scoring Summary
+```{r fig.show="hold", warning=FALSE, out.width="50%"}
+ggplot(data = sb_rbi_pitches, aes(x=ab_result)) +
+  geom_bar(fill = 'orange') +
+  labs(title="UCSB",
+       x = "AB Result") +
+  scale_x_discrete(limits = c('S','D','T','HR','BB','HBP','IP_OUT','SF','DP','ROFC'))
+  
+ggplot(data = rbi_pitches, aes(x=ab_result)) +
+  geom_bar(fill = 'orange') +
+  labs(title="Opp",
+       x ="AB Result") +
+  scale_x_discrete(limits = c('S','D','T','HR','BB','HBP','IP_OUT','SF','DP','ROFC'))
+
+ggplot(data = sb_rbi_pitches, aes(x=type)) +
+  geom_bar(fill = 'blue') +
+  labs(title="UCSB",
+       x = "Pitch Type")
+ggplot(data = rbi_pitches, aes(x=type)) +
+  geom_bar(fill = 'blue') +
+  labs(title="Opp",
+       x = "Pitch Type")
+
+ggplot(data = sb_rbi_pitches, aes(x=inning)) +
+  geom_bar(fill = 'green') +
+  labs(title="UCSB") +
+  scale_x_continuous(limits=c(1,9), breaks=seq(1,9,1))
+ggplot(data = rbi_pitches, aes(x=inning)) +
+  geom_bar(fill = 'green') +
+  labs(title="Opp") +
+  scale_x_continuous(limits=c(1,9), breaks=seq(1,9,1))
+
+ggplot(data = sb_rbi_pitches, aes(x=pitch_num_in_ab)) +
+  geom_bar(fill = 'red') +
+  labs(title="UCSB")
+ggplot(data = rbi_pitches, aes(x=pitch_num_in_ab)) +
+  geom_bar(fill = 'red') +
+  labs(title="Opp")
+
+ggplot(data = sb_rbi_pitches, aes(x=count)) +
+  geom_bar(fill = 'purple') +
+  labs(title="UCSB")
+ggplot(data = rbi_pitches, aes(x=count)) +
+  geom_bar(fill = 'purple') +
+  labs(title="Opp")
+```
+
+```{r fig.show="hold", warning=FALSE, out.width="50%"}
+u <- ggplot(sb_rbi_pitches, aes(x = px_norm, y = pz_norm)) +
+  geom_density_2d(color = 'blue', alpha = 0.3, linewidth=0.7) +
+  labs(title = "UCSB RBI pitches",
+       x = "Normalized Ball X Axis Location",
+       y = "Normalized Ball Z Axis Location") +
+  theme_minimal() +
+  scale_x_continuous(limits=c(-4,4), breaks=seq(-4,4,1)) + 
+  scale_y_continuous(limits=c(-4,4), breaks=seq(-4,4,1)) +
+  coord_fixed(ratio = 25.2/22.82)
+  
+u + geom_point(data = sb_rbi_pitches, aes(color = type), size = 1, alpha = 0.6) +
+  geom_segment(aes(x =-1, y = -1, xend = 1, yend = -1)) +
+  geom_segment(aes(x =-1, y = -1, xend = -1, yend = 1)) +
+  geom_segment(aes(x =-1, y = 1, xend = 1, yend = 1)) +
+  geom_segment(aes(x =1, y = -1, xend = 1, yend = 1))
+
+p <- ggplot(rbi_pitches, aes(x = px_norm, y = pz_norm)) +
+  geom_density_2d(color = 'blue', alpha = 0.3, linewidth=0.7) +
+  labs(title = "Opponent RBI Pitches",
+       x = "Normalized Ball X Axis Location",
+       y = "Normalized Ball Z Axis Location") +
+  theme_minimal() +
+  scale_x_continuous(limits=c(-4,4), breaks=seq(-4,4,1)) + 
+  scale_y_continuous(limits=c(-4,4), breaks=seq(-4,4,1)) +
+  coord_fixed(ratio = 25.2/22.82)
+  
+p + geom_point(data = rbi_pitches, aes(color = type), size = 1, alpha = 0.6) +
+  geom_segment(aes(x =-1, y = -1, xend = 1, yend = -1)) +
+  geom_segment(aes(x =-1, y = -1, xend = -1, yend = 1)) +
+  geom_segment(aes(x =-1, y = 1, xend = 1, yend = 1)) +
+  geom_segment(aes(x =1, y = -1, xend = 1, yend = 1))
+```
+
+## Batter Tendencies
+
+```{r}
+sb_stats <- generate_stats(ucsb_data)
+team_stats <- generate_stats(team_data)
+
+sb_pitch_stats <- stats_by_pitch(ucsb_data)
+pitch_stats <- stats_by_pitch(team_data)
+
+labels <- c("Team", "Swing %", "Take %", "Whiff %", "Chase %", "In-Zone Swing %", "In-Zone Whiff %")
+labels1 <- c("Type", "Swing %", "Take %", "Whiff %", "Chase %", "In-Zone Swing %", "In-Zone Whiff %")
+df <- data.frame(Team = c("UCSB", "Opp"),
+                 Swing_Perc = c(sb_stats[[1]], team_stats[[1]]),
+                 Take_Perc = c(sb_stats[[2]], team_stats[[2]]),
+                 Whiff_Perc = c(sb_stats[[3]], team_stats[[3]]),
+                 Chase_Perc = c(sb_stats[[4]], team_stats[[4]]),
+                 Inzone_Swing_Perc = c(sb_stats[[5]], team_stats[[5]]),
+                 Inzone_Whiff_Perc = c(sb_stats[[6]], team_stats[[6]]))
+
+df1 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(sb_pitch_stats[[1]], sb_pitch_stats[[7]], sb_pitch_stats[[13]], sb_pitch_stats[[19]], sb_pitch_stats[[25]]),
+                  n2 = c(sb_pitch_stats[[2]], sb_pitch_stats[[8]], sb_pitch_stats[[14]], sb_pitch_stats[[20]], sb_pitch_stats[[26]]),
+                  n3 = c(sb_pitch_stats[[3]], sb_pitch_stats[[9]], sb_pitch_stats[[15]], sb_pitch_stats[[21]], sb_pitch_stats[[27]]),
+                  n4 = c(sb_pitch_stats[[4]], sb_pitch_stats[[10]], sb_pitch_stats[[16]], sb_pitch_stats[[22]], sb_pitch_stats[[28]]),
+                  n5 = c(sb_pitch_stats[[5]], sb_pitch_stats[[11]], sb_pitch_stats[[17]], sb_pitch_stats[[23]], sb_pitch_stats[[29]]),
+                  n6 = c(sb_pitch_stats[[6]], sb_pitch_stats[[12]], sb_pitch_stats[[18]], sb_pitch_stats[[24]], sb_pitch_stats[[30]])
+                  )
+
+df2 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(pitch_stats[[1]], pitch_stats[[7]], pitch_stats[[13]], pitch_stats[[19]], pitch_stats[[25]]),
+                  n2 = c(pitch_stats[[2]], pitch_stats[[8]], pitch_stats[[14]], pitch_stats[[20]], pitch_stats[[26]]),
+                  n3 = c(pitch_stats[[3]], pitch_stats[[9]], pitch_stats[[15]], pitch_stats[[21]], pitch_stats[[27]]),
+                  n4 = c(pitch_stats[[4]], pitch_stats[[10]], pitch_stats[[16]], pitch_stats[[22]], pitch_stats[[28]]),
+                  n5 = c(pitch_stats[[5]], pitch_stats[[11]], pitch_stats[[17]], pitch_stats[[23]], pitch_stats[[29]]),
+                  n6 = c(pitch_stats[[6]], pitch_stats[[12]], pitch_stats[[18]], pitch_stats[[24]], pitch_stats[[30]])
+                  )
+
+colnames(df) <- labels
+colnames(df1) <- labels1
+colnames(df2) <- labels1
+
+kable(df, caption = "Overall Stats", digits=2)
+kable(df1, caption = "UCSB", digits = 2)
+kable(df2, caption = "Opp", digits = 2)
+
+```
+
+### All Swings
+
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_swings, "Fastball", "UCSB Fastballs Swung At", "red")
+generate_zone(swings, "Fastball", "Opp Fastballs Swung At", "red")
+generate_zone(sb_swings, "Curveball", "UCSB Curveballs Swung At", "blue")
+generate_zone(swings, "Curveball", "Opp Curveballs Swung At", "blue")
+generate_zone(sb_swings, "Slider", "UCSB Sliders Swung At", "green")
+generate_zone(swings, "Slider", "Opp Sliders Swung At", "green")
+generate_zone(sb_swings, "Changeup", "UCSB Changeups Swung At", "purple")
+generate_zone(swings, "Changeup", "Opp Changeups Swung At", "purple")
+generate_zone(sb_swings, "Sinker", "UCSB Sinkers Swung At", "orange")
+generate_zone(swings, "Sinker", "Opp Sinkers Swung At", "orange")
+```
+
+
+
+
+### All Takes
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_takes, "Fastball", "UCSB Fastballs Taken", "red")
+generate_zone(takes, "Fastball", "Opp Fastballs Taken", "red")
+generate_zone(sb_takes, "Curveball", "UCSB Curveballs Taken", "blue")
+generate_zone(takes, "Curveball", "Opp Curveballs Taken", "blue")
+generate_zone(sb_takes, "Slider", "UCSB Sliders Taken", "green")
+generate_zone(takes, "Slider", "Opp Sliders Taken", "green")
+generate_zone(sb_takes, "Changeup", "UCSB Changeups Taken", "purple")
+generate_zone(takes, "Changeup", "Opp Changeups Taken", "purple")
+generate_zone(sb_takes, "Sinker", "UCSB Sinkers Taken", "orange")
+generate_zone(takes, "Sinker", "Opp Sinkers Taken", "orange")
+```
+
+
+
+### All Misses
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_misses, "Fastball", "UCSB Fastballs Missed", "red")
+generate_zone(misses, "Fastball", "Opp Fastballs Missed", "red")
+generate_zone(sb_misses, "Curveball", "UCSB Curveballs Missed", "blue")
+generate_zone(misses, "Curveball", "Opp Curveballs Missed", "blue")
+generate_zone(sb_misses, "Slider", "UCSB Sliders Missed", "green")
+generate_zone(misses, "Slider", "Opp Sliders Missed", "green")
+generate_zone(sb_misses, "Changeup", "UCSB Changeups Missed", "purple")
+generate_zone(misses, "Changeup", "Opp Changeups Missed", "purple")
+generate_zone(sb_misses, "Sinker", "UCSB Sinkers Missed", "orange")
+generate_zone(misses, "Sinker", "Opp Sinkers Missed", "orange")
+```
+
+
+
+
+## Runner Situations
+
+```{r split into swings/takes/misses}
+sb_no_runners_s <- sb_no_runners[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sb_no_runners$pitch_result), ]
+sb_no_runners_m <- sb_no_runners[grep("Swinging|Missed", sb_no_runners$pitch_result), ]
+sb_no_runners_t <- filter(sb_no_runners, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+sb_scoring_pos_s <- sb_scoring_pos[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sb_scoring_pos$pitch_result), ]
+sb_scoring_pos_m <- sb_scoring_pos[grep("Swinging|Missed", sb_scoring_pos$pitch_result), ]
+sb_scoring_pos_t <- filter(sb_scoring_pos, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+no_runners_s <- no_runners[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", no_runners$pitch_result), ]
+no_runners_m <- no_runners[grep("Swinging|Missed", no_runners$pitch_result), ]
+no_runners_t <- filter(no_runners, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+scoring_pos_s <- scoring_pos[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", scoring_pos$pitch_result), ]
+scoring_pos_m <- scoring_pos[grep("Swinging|Missed", scoring_pos$pitch_result), ]
+scoring_pos_t <- filter(scoring_pos, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+```
+
+
+```{r}
+sb_no_runners_stats <- generate_stats(sb_no_runners)
+sb_no_runners_pitch_stats <- stats_by_pitch(sb_no_runners)
+sb_scoring_pos_stats <- generate_stats(sb_scoring_pos)
+sb_scoring_pos_pitch_stats <- stats_by_pitch(sb_scoring_pos)
+
+no_runners_stats <- generate_stats(no_runners)
+no_runners_pitch_stats <- stats_by_pitch(no_runners)
+scoring_pos_stats <- generate_stats(scoring_pos)
+scoring_pos_pitch_stats <- stats_by_pitch(scoring_pos)
+
+labels <- c("Situation", "Swing %", "Take %", "Whiff %", "Chase %", "In-Zone Swing %", "In-Zone Whiff %")
+sbdf <- data.frame(Situation = c("No Runners", "Scoring Position"),
+                 Swing_Perc = c(sb_no_runners_stats[[1]], sb_scoring_pos_stats[[1]]),
+                 Take_Perc = c(sb_no_runners_stats[[2]], sb_scoring_pos_stats[[2]]),
+                 Whiff_Perc = c(sb_no_runners_stats[[3]], sb_scoring_pos_stats[[3]]),
+                 Chase_Perc = c(sb_no_runners_stats[[4]], sb_scoring_pos_stats[[4]]),
+                 Inzone_Swing_Perc = c(sb_no_runners_stats[[5]], sb_scoring_pos_stats[[5]]),
+                 Inzone_Whiff_Perc = c(sb_no_runners_stats[[6]], sb_scoring_pos_stats[[6]]))
+df <- data.frame(Situation = c("No Runners", "Scoring Position"),
+                 Swing_Perc = c(no_runners_stats[[1]], scoring_pos_stats[[1]]),
+                 Take_Perc = c(no_runners_stats[[2]], scoring_pos_stats[[2]]),
+                 Whiff_Perc = c(no_runners_stats[[3]], scoring_pos_stats[[3]]),
+                 Chase_Perc = c(no_runners_stats[[4]], scoring_pos_stats[[4]]),
+                 Inzone_Swing_Perc = c(no_runners_stats[[5]], scoring_pos_stats[[5]]),
+                 Inzone_Whiff_Perc = c(no_runners_stats[[6]], scoring_pos_stats[[6]]))
+
+sbdf1 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(sb_no_runners_pitch_stats[[1]], sb_no_runners_pitch_stats[[7]], sb_no_runners_pitch_stats[[13]], sb_no_runners_pitch_stats[[19]], sb_no_runners_pitch_stats[[25]]),
+                  n2 = c(sb_no_runners_pitch_stats[[2]], sb_no_runners_pitch_stats[[8]], sb_no_runners_pitch_stats[[14]], sb_no_runners_pitch_stats[[20]], sb_no_runners_pitch_stats[[26]]),
+                  n3 = c(sb_no_runners_pitch_stats[[3]], sb_no_runners_pitch_stats[[9]], sb_no_runners_pitch_stats[[15]], sb_no_runners_pitch_stats[[21]], sb_no_runners_pitch_stats[[27]]),
+                  n4 = c(sb_no_runners_pitch_stats[[4]], sb_no_runners_pitch_stats[[10]], sb_no_runners_pitch_stats[[16]], sb_no_runners_pitch_stats[[22]], sb_no_runners_pitch_stats[[28]]),
+                  n5 = c(sb_no_runners_pitch_stats[[5]], sb_no_runners_pitch_stats[[11]], sb_no_runners_pitch_stats[[17]], sb_no_runners_pitch_stats[[23]], sb_no_runners_pitch_stats[[29]]),
+                  n6 = c(sb_no_runners_pitch_stats[[6]], sb_no_runners_pitch_stats[[12]], sb_no_runners_pitch_stats[[18]], sb_no_runners_pitch_stats[[24]], sb_no_runners_pitch_stats[[30]])
+                  )
+
+df1 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(no_runners_pitch_stats[[1]], no_runners_pitch_stats[[7]], no_runners_pitch_stats[[13]], no_runners_pitch_stats[[19]], no_runners_pitch_stats[[25]]),
+                  n2 = c(no_runners_pitch_stats[[2]], no_runners_pitch_stats[[8]], no_runners_pitch_stats[[14]], no_runners_pitch_stats[[20]], no_runners_pitch_stats[[26]]),
+                  n3 = c(no_runners_pitch_stats[[3]], no_runners_pitch_stats[[9]], no_runners_pitch_stats[[15]], no_runners_pitch_stats[[21]], no_runners_pitch_stats[[27]]),
+                  n4 = c(no_runners_pitch_stats[[4]], no_runners_pitch_stats[[10]], no_runners_pitch_stats[[16]], no_runners_pitch_stats[[22]], no_runners_pitch_stats[[28]]),
+                  n5 = c(no_runners_pitch_stats[[5]], no_runners_pitch_stats[[11]], no_runners_pitch_stats[[17]], no_runners_pitch_stats[[23]], no_runners_pitch_stats[[29]]),
+                  n6 = c(no_runners_pitch_stats[[6]], no_runners_pitch_stats[[12]], no_runners_pitch_stats[[18]], no_runners_pitch_stats[[24]], no_runners_pitch_stats[[30]])
+)
+
+sbdf2 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(sb_scoring_pos_pitch_stats[[1]], sb_scoring_pos_pitch_stats[[7]], sb_scoring_pos_pitch_stats[[13]], sb_scoring_pos_pitch_stats[[19]], sb_scoring_pos_pitch_stats[[25]]),
+                  n2 = c(sb_scoring_pos_pitch_stats[[2]], sb_scoring_pos_pitch_stats[[8]], sb_scoring_pos_pitch_stats[[14]], sb_scoring_pos_pitch_stats[[20]], sb_scoring_pos_pitch_stats[[26]]),
+                  n3 = c(sb_scoring_pos_pitch_stats[[3]], sb_scoring_pos_pitch_stats[[9]], sb_scoring_pos_pitch_stats[[15]], sb_scoring_pos_pitch_stats[[21]], sb_scoring_pos_pitch_stats[[27]]),
+                  n4 = c(sb_scoring_pos_pitch_stats[[4]], sb_scoring_pos_pitch_stats[[10]], sb_scoring_pos_pitch_stats[[16]], sb_scoring_pos_pitch_stats[[22]], sb_scoring_pos_pitch_stats[[28]]),
+                  n5 = c(sb_scoring_pos_pitch_stats[[5]], sb_scoring_pos_pitch_stats[[11]], sb_scoring_pos_pitch_stats[[17]], sb_scoring_pos_pitch_stats[[23]], sb_scoring_pos_pitch_stats[[29]]),
+                  n6 = c(sb_scoring_pos_pitch_stats[[6]], sb_scoring_pos_pitch_stats[[12]], sb_scoring_pos_pitch_stats[[18]], sb_scoring_pos_pitch_stats[[24]], sb_scoring_pos_pitch_stats[[30]])
+                  )
+
+df2 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(scoring_pos_pitch_stats[[1]], scoring_pos_pitch_stats[[7]], scoring_pos_pitch_stats[[13]], scoring_pos_pitch_stats[[19]], scoring_pos_pitch_stats[[25]]),
+                  n2 = c(scoring_pos_pitch_stats[[2]], scoring_pos_pitch_stats[[8]], scoring_pos_pitch_stats[[14]], scoring_pos_pitch_stats[[20]], scoring_pos_pitch_stats[[26]]),
+                  n3 = c(scoring_pos_pitch_stats[[3]], scoring_pos_pitch_stats[[9]], scoring_pos_pitch_stats[[15]], scoring_pos_pitch_stats[[21]], scoring_pos_pitch_stats[[27]]),
+                  n4 = c(scoring_pos_pitch_stats[[4]], scoring_pos_pitch_stats[[10]], scoring_pos_pitch_stats[[16]], scoring_pos_pitch_stats[[22]], scoring_pos_pitch_stats[[28]]),
+                  n5 = c(scoring_pos_pitch_stats[[5]], scoring_pos_pitch_stats[[11]], scoring_pos_pitch_stats[[17]], scoring_pos_pitch_stats[[23]], scoring_pos_pitch_stats[[29]]),
+                  n6 = c(scoring_pos_pitch_stats[[6]], scoring_pos_pitch_stats[[12]], scoring_pos_pitch_stats[[18]], scoring_pos_pitch_stats[[24]], scoring_pos_pitch_stats[[30]])
+)
+
+colnames(sbdf) <- labels
+colnames(df) <- labels
+colnames(sbdf1) <- labels1
+colnames(df1) <- labels1
+colnames(sbdf2) <- labels1
+colnames(df2) <- labels1
+
+kable(sbdf, caption = "UCSB Runner Situations", digits = 2)
+kable(df, caption = "Opp Runner Situations", digits = 2)
+kable(sbdf1, caption = "UCSB No Runners", digits = 2)
+kable(df1, caption = "Opp No Runners", digits = 2)
+kable(sbdf2, caption = "UCSB Scoring Position", digits = 2)
+kable(df2, caption = "Opp Scoring Position", digits = 2)
+```
+
+
+### No Runners
+
+
+#### Swings
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_no_runners_s, "Fastball", "UCSB Fastballs Swung At", "red")
+generate_zone(no_runners_s, "Fastball", "Opp Fastballs Swung At", "red")
+generate_zone(sb_no_runners_s, "Curveball", "UCSB Curveballs Swung At", "blue")
+generate_zone(no_runners_s, "Curveball", "Opp Curveballs Swung At", "blue")
+generate_zone(sb_no_runners_s, "Slider", "UCSB Sliders Swung At", "green")
+generate_zone(no_runners_s, "Slider", "Opp Sliders Swung At", "green")
+generate_zone(sb_no_runners_s, "Changeup", "UCSB Changeups Swung At", "purple")
+generate_zone(no_runners_s, "Changeup", "Opp Changeups Swung At", "purple")
+generate_zone(sb_no_runners_s, "Sinker", "UCSB Sinkers Swung At", "orange")
+generate_zone(no_runners_s, "Sinker", "Opp Sinkers Swung At", "orange")
+```
+
+
+#### Takes
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_no_runners_t, "Fastball", "UCSB Fastballs Taken", "red")
+generate_zone(no_runners_t, "Fastball", "Opp Fastballs Taken", "red")
+generate_zone(sb_no_runners_t, "Curveball", "UCSB Curveballs Taken", "blue")
+generate_zone(no_runners_t, "Curveball", "Opp Curveballs Taken", "blue")
+generate_zone(sb_no_runners_t, "Slider", "UCSB Sliders Taken", "green")
+generate_zone(no_runners_t, "Slider", "Opp Sliders Taken", "green")
+generate_zone(sb_no_runners_t, "Changeup", "UCSB Changeups Taken", "purple")
+generate_zone(no_runners_t, "Changeup", "Opp Changeups Taken", "purple")
+generate_zone(sb_no_runners_t, "Sinker", "UCSB Sinkers Taken", "orange")
+generate_zone(no_runners_t, "Sinker", "Opp Sinkers Taken", "orange")
+```
+
+
+#### Misses
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_no_runners_m, "Fastball", "UCSB Fastballs Missed", "red")
+generate_zone(no_runners_m, "Fastball", "Opp Fastballs Missed", "red")
+generate_zone(sb_no_runners_m, "Curveball", "UCSB Curveballs Missed", "blue")
+generate_zone(no_runners_m, "Curveball", "Opp Curveballs Missed", "blue")
+generate_zone(sb_no_runners_m, "Slider", "UCSB Sliders Missed", "green")
+generate_zone(no_runners_m, "Slider", "Opp Sliders Missed", "green")
+generate_zone(sb_no_runners_m, "Changeup", "UCSB Changeups Missed", "purple")
+generate_zone(no_runners_m, "Changeup", "Opp Changeups Missed", "purple")
+generate_zone(sb_no_runners_m, "Sinker", "UCSB Sinkers Missed", "orange")
+generate_zone(no_runners_m, "Sinker", "Opp Sinkers Missed", "orange")
+```
+
+### Scoring Position
+
+#### Swings
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_scoring_pos_s, "Fastball", "UCSB Fastballs Swung At", "red")
+generate_zone(scoring_pos_s, "Fastball", "Opp Fastballs Swung At", "red")
+generate_zone(sb_scoring_pos_s, "Curveball", "UCSB Curveballs Swung At", "blue")
+generate_zone(scoring_pos_s, "Curveball", "Opp Curveballs Swung At", "blue")
+generate_zone(sb_scoring_pos_s, "Slider", "UCSB Sliders Swung At", "green")
+generate_zone(scoring_pos_s, "Slider", "Opp Sliders Swung At", "green")
+generate_zone(sb_scoring_pos_s, "Changeup", "UCSB Changeups Swung At", "purple")
+generate_zone(scoring_pos_s, "Changeup", "Opp Changeups Swung At", "purple")
+generate_zone(sb_scoring_pos_s, "Sinker", "UCSB Sinkers Swung At", "orange")
+generate_zone(scoring_pos_s, "Sinker", "Opp Sinkers Swung At", "orange")
+```
+
+
+#### Takes
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_scoring_pos_t, "Fastball", "UCSB Fastballs Taken", "red")
+generate_zone(scoring_pos_t, "Fastball", "Opp Fastballs Taken", "red")
+generate_zone(sb_scoring_pos_t, "Curveball", "UCSB Curveballs Taken", "blue")
+generate_zone(scoring_pos_t, "Curveball", "Opp Curveballs Taken", "blue")
+generate_zone(sb_scoring_pos_t, "Slider", "UCSB Sliders Taken", "green")
+generate_zone(scoring_pos_t, "Slider", "Opp Sliders Taken", "green")
+generate_zone(sb_scoring_pos_t, "Changeup", "UCSB Changeups Taken", "purple")
+generate_zone(scoring_pos_t, "Changeup", "Opp Changeups Taken", "purple")
+generate_zone(sb_scoring_pos_t, "Sinker", "UCSB Sinkers Taken", "orange")
+generate_zone(scoring_pos_t, "Sinker", "Opp Sinkers Taken", "orange")
+```
+
+
+#### Misses
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_scoring_pos_m, "Fastball", "UCSB Fastballs Missed", "red")
+generate_zone(scoring_pos_m, "Fastball", "Opp Fastballs Missed", "red")
+generate_zone(sb_scoring_pos_m, "Curveball", "UCSB Curveballs Missed", "blue")
+generate_zone(scoring_pos_m, "Curveball", "Opp Curveballs Missed", "blue")
+generate_zone(sb_scoring_pos_m, "Slider", "UCSB Sliders Missed", "green")
+generate_zone(scoring_pos_m, "Slider", "Opp Sliders Missed", "green")
+generate_zone(sb_scoring_pos_m, "Changeup", "UCSB Changeups Missed", "purple")
+generate_zone(scoring_pos_m, "Changeup", "Opp Changeups Missed", "purple")
+generate_zone(sb_scoring_pos_m, "Sinker", "UCSB Sinkers Missed", "orange")
+generate_zone(scoring_pos_m, "Sinker", "Opp Sinkers Missed", "orange")
+``` 
+
+## Out Situation
+
+```{r}
+sb_no_outs_s <- sb_no_outs[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sb_no_outs$pitch_result), ]
+sb_no_outs_m <- sb_no_outs[grep("Swinging|Missed", sb_no_outs$pitch_result), ]
+sb_no_outs_t <- filter(sb_no_outs, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+sb_two_outs_s <- sb_two_outs[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sb_two_outs$pitch_result), ]
+sb_two_outs_m <- sb_two_outs[grep("Swinging|Missed", sb_two_outs$pitch_result), ]
+sb_two_outs_t <- filter(sb_two_outs, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+no_outs_s <- no_outs[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", no_outs$pitch_result), ]
+no_outs_m <- no_outs[grep("Swinging|Missed", no_outs$pitch_result), ]
+no_outs_t <- filter(no_outs, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+two_outs_s <- two_outs[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", two_outs$pitch_result), ]
+two_outs_m <- two_outs[grep("Swinging|Missed", two_outs$pitch_result), ]
+two_outs_t <- filter(two_outs, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+```
+
+
+```{r}
+sb_no_outs_stats <- generate_stats(sb_no_outs)
+sb_no_outs_pitch_stats <- stats_by_pitch(sb_no_outs)
+sb_two_outs_stats <- generate_stats(sb_two_outs)
+sb_two_outs_pitch_stats <- stats_by_pitch(sb_two_outs)
+
+no_outs_stats <- generate_stats(no_outs)
+no_outs_pitch_stats <- stats_by_pitch(no_outs)
+two_outs_stats <- generate_stats(two_outs)
+two_outs_pitch_stats <- stats_by_pitch(two_outs)
+
+labels <- c("Situation", "Swing %", "Take %", "Whiff %", "Chase %", "In-Zone Swing %", "In-Zone Whiff %")
+sbdf <- data.frame(Situation = c("No Outs", "Two Outs"),
+                 Swing_Perc = c(sb_no_outs_stats[[1]], sb_two_outs_stats[[1]]),
+                 Take_Perc = c(sb_no_outs_stats[[2]], sb_two_outs_stats[[2]]),
+                 Whiff_Perc = c(sb_no_outs_stats[[3]], sb_two_outs_stats[[3]]),
+                 Chase_Perc = c(sb_no_outs_stats[[4]], sb_two_outs_stats[[4]]),
+                 Inzone_Swing_Perc = c(sb_no_outs_stats[[5]], sb_two_outs_stats[[5]]),
+                 Inzone_Whiff_Perc = c(sb_no_outs_stats[[6]], sb_two_outs_stats[[6]]))
+df <- data.frame(Situation = c("No Outs", "Two Outs"),
+                 Swing_Perc = c(no_outs_stats[[1]], two_outs_stats[[1]]),
+                 Take_Perc = c(no_outs_stats[[2]], two_outs_stats[[2]]),
+                 Whiff_Perc = c(no_outs_stats[[3]], two_outs_stats[[3]]),
+                 Chase_Perc = c(no_outs_stats[[4]], two_outs_stats[[4]]),
+                 Inzone_Swing_Perc = c(no_outs_stats[[5]], two_outs_stats[[5]]),
+                 Inzone_Whiff_Perc = c(no_outs_stats[[6]], two_outs_stats[[6]]))
+
+sbdf1 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(sb_no_outs_pitch_stats[[1]], sb_no_outs_pitch_stats[[7]], sb_no_outs_pitch_stats[[13]], sb_no_outs_pitch_stats[[19]], sb_no_outs_pitch_stats[[25]]),
+                  n2 = c(sb_no_outs_pitch_stats[[2]], sb_no_outs_pitch_stats[[8]], sb_no_outs_pitch_stats[[14]], sb_no_outs_pitch_stats[[20]], sb_no_outs_pitch_stats[[26]]),
+                  n3 = c(sb_no_outs_pitch_stats[[3]], sb_no_outs_pitch_stats[[9]], sb_no_outs_pitch_stats[[15]], sb_no_outs_pitch_stats[[21]], sb_no_outs_pitch_stats[[27]]),
+                  n4 = c(sb_no_outs_pitch_stats[[4]], sb_no_outs_pitch_stats[[10]], sb_no_outs_pitch_stats[[16]], sb_no_outs_pitch_stats[[22]], sb_no_outs_pitch_stats[[28]]),
+                  n5 = c(sb_no_outs_pitch_stats[[5]], sb_no_outs_pitch_stats[[11]], sb_no_outs_pitch_stats[[17]], sb_no_outs_pitch_stats[[23]], sb_no_outs_pitch_stats[[29]]),
+                  n6 = c(sb_no_outs_pitch_stats[[6]], sb_no_outs_pitch_stats[[12]], sb_no_outs_pitch_stats[[18]], sb_no_outs_pitch_stats[[24]], sb_no_outs_pitch_stats[[30]])
+                  )
+
+df1 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(no_outs_pitch_stats[[1]], no_outs_pitch_stats[[7]], no_outs_pitch_stats[[13]], no_outs_pitch_stats[[19]], no_outs_pitch_stats[[25]]),
+                  n2 = c(no_outs_pitch_stats[[2]], no_outs_pitch_stats[[8]], no_outs_pitch_stats[[14]], no_outs_pitch_stats[[20]], no_outs_pitch_stats[[26]]),
+                  n3 = c(no_outs_pitch_stats[[3]], no_outs_pitch_stats[[9]], no_outs_pitch_stats[[15]], no_outs_pitch_stats[[21]], no_outs_pitch_stats[[27]]),
+                  n4 = c(no_outs_pitch_stats[[4]], no_outs_pitch_stats[[10]], no_outs_pitch_stats[[16]], no_outs_pitch_stats[[22]], no_outs_pitch_stats[[28]]),
+                  n5 = c(no_outs_pitch_stats[[5]], no_outs_pitch_stats[[11]], no_outs_pitch_stats[[17]], no_outs_pitch_stats[[23]], no_outs_pitch_stats[[29]]),
+                  n6 = c(no_outs_pitch_stats[[6]], no_outs_pitch_stats[[12]], no_outs_pitch_stats[[18]], no_outs_pitch_stats[[24]], no_outs_pitch_stats[[30]])
+)
+
+sbdf2 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(sb_two_outs_pitch_stats[[1]], sb_two_outs_pitch_stats[[7]], sb_two_outs_pitch_stats[[13]], sb_two_outs_pitch_stats[[19]], sb_two_outs_pitch_stats[[25]]),
+                  n2 = c(sb_two_outs_pitch_stats[[2]], sb_two_outs_pitch_stats[[8]], sb_two_outs_pitch_stats[[14]], sb_two_outs_pitch_stats[[20]], sb_two_outs_pitch_stats[[26]]),
+                  n3 = c(sb_two_outs_pitch_stats[[3]], sb_two_outs_pitch_stats[[9]], sb_two_outs_pitch_stats[[15]], sb_two_outs_pitch_stats[[21]], sb_two_outs_pitch_stats[[27]]),
+                  n4 = c(sb_two_outs_pitch_stats[[4]], sb_two_outs_pitch_stats[[10]], sb_two_outs_pitch_stats[[16]], sb_two_outs_pitch_stats[[22]], sb_two_outs_pitch_stats[[28]]),
+                  n5 = c(sb_two_outs_pitch_stats[[5]], sb_two_outs_pitch_stats[[11]], sb_two_outs_pitch_stats[[17]], sb_two_outs_pitch_stats[[23]], sb_two_outs_pitch_stats[[29]]),
+                  n6 = c(sb_two_outs_pitch_stats[[6]], sb_two_outs_pitch_stats[[12]], sb_two_outs_pitch_stats[[18]], sb_two_outs_pitch_stats[[24]], sb_two_outs_pitch_stats[[30]])
+                  )
+
+df2 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(two_outs_pitch_stats[[1]], two_outs_pitch_stats[[7]], two_outs_pitch_stats[[13]], two_outs_pitch_stats[[19]], two_outs_pitch_stats[[25]]),
+                  n2 = c(two_outs_pitch_stats[[2]], two_outs_pitch_stats[[8]], two_outs_pitch_stats[[14]], two_outs_pitch_stats[[20]], two_outs_pitch_stats[[26]]),
+                  n3 = c(two_outs_pitch_stats[[3]], two_outs_pitch_stats[[9]], two_outs_pitch_stats[[15]], two_outs_pitch_stats[[21]], two_outs_pitch_stats[[27]]),
+                  n4 = c(two_outs_pitch_stats[[4]], two_outs_pitch_stats[[10]], two_outs_pitch_stats[[16]], two_outs_pitch_stats[[22]], two_outs_pitch_stats[[28]]),
+                  n5 = c(two_outs_pitch_stats[[5]], two_outs_pitch_stats[[11]], two_outs_pitch_stats[[17]], two_outs_pitch_stats[[23]], two_outs_pitch_stats[[29]]),
+                  n6 = c(two_outs_pitch_stats[[6]], two_outs_pitch_stats[[12]], two_outs_pitch_stats[[18]], two_outs_pitch_stats[[24]], two_outs_pitch_stats[[30]])
+)
+
+colnames(sbdf) <- labels
+colnames(df) <- labels
+colnames(sbdf1) <- labels1
+colnames(df1) <- labels1
+colnames(sbdf2) <- labels1
+colnames(df2) <- labels1
+
+
+kable(sbdf, caption = "UCSB Out Situations", digits = 2)
+kable(df, caption = "Opp Out Situations", digits = 2)
+kable(sbdf1, caption = "UCSB No Outs", digits = 2)
+kable(df1, caption = "Opp No Outs", digits = 2)
+kable(sbdf2, caption = "UCSB Two Outs", digits = 2)
+kable(df2, caption = "Opp Two Outs", digits = 2)
+```
+
+### 0 Outs
+
+#### Swings
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_no_outs_s, "Fastball", "UCSB Fastballs Swung At", "red")
+generate_zone(no_outs_s, "Fastball", "Opp Fastballs Swung At", "red")
+generate_zone(sb_no_outs_s, "Curveball", "UCSB Curveballs Swung At", "blue")
+generate_zone(no_outs_s, "Curveball", "Opp Curveballs Swung At", "blue")
+generate_zone(sb_no_outs_s, "Slider", "UCSB Sliders Swung At", "green")
+generate_zone(no_outs_s, "Slider", "Opp Sliders Swung At", "green")
+generate_zone(sb_no_outs_s, "Changeup", "UCSB Changeups Swung At", "purple")
+generate_zone(no_outs_s, "Changeup", "Opp Changeups Swung At", "purple")
+generate_zone(sb_no_outs_s, "Sinker", "UCSB Sinkers Swung At", "orange")
+generate_zone(no_outs_s, "Sinker", "Opp Sinkers Swung At", "orange")
+```
+
+#### Takes
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_no_outs_t, "Fastball", "UCSB Fastballs Taken", "red")
+generate_zone(no_outs_t, "Fastball", "Opp Fastballs Taken", "red")
+generate_zone(sb_no_outs_t, "Curveball", "UCSB Curveballs Taken", "blue")
+generate_zone(no_outs_t, "Curveball", "Opp Curveballs Taken", "blue")
+generate_zone(sb_no_outs_t, "Slider", "UCSB Sliders Taken", "green")
+generate_zone(no_outs_t, "Slider", "Opp Sliders Taken", "green")
+generate_zone(sb_no_outs_t, "Changeup", "UCSB Changeups Taken", "purple")
+generate_zone(no_outs_t, "Changeup", "Opp Changeups Taken", "purple")
+generate_zone(sb_no_outs_t, "Sinker", "UCSB Sinkers Taken", "orange")
+generate_zone(no_outs_t, "Sinker", "Opp Sinkers Taken", "orange")
+```
+
+#### Misses
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_no_outs_m, "Fastball", "UCSB Fastballs Missed", "red")
+generate_zone(no_outs_m, "Fastball", "Opp Fastballs Missed", "red")
+generate_zone(sb_no_outs_m, "Curveball", "UCSB Curveballs Missed", "blue")
+generate_zone(no_outs_m, "Curveball", "Opp Curveballs Missed", "blue")
+generate_zone(sb_no_outs_m, "Slider", "UCSB Sliders Missed", "green")
+generate_zone(no_outs_m, "Slider", "Opp Sliders Missed", "green")
+generate_zone(sb_no_outs_m, "Changeup", "UCSB Changeups Missed", "purple")
+generate_zone(no_outs_m, "Changeup", "Opp Changeups Missed", "purple")
+generate_zone(sb_no_outs_m, "Sinker", "UCSB Sinkers Missed", "orange")
+generate_zone(no_outs_m, "Sinker", "Opp Sinkers Missed", "orange")
+```
+
+
+### 2 Outs
+
+#### Swings
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_two_outs_s, "Fastball", "UCSB Fastballs Swung At", "red")
+generate_zone(two_outs_s, "Fastball", "Opp Fastballs Swung At", "red")
+generate_zone(sb_two_outs_s, "Curveball", "UCSB Curveballs Swung At", "blue")
+generate_zone(two_outs_s, "Curveball", "Opp Curveballs Swung At", "blue")
+generate_zone(sb_two_outs_s, "Slider", "UCSB Sliders Swung At", "green")
+generate_zone(two_outs_s, "Slider", "Opp Sliders Swung At", "green")
+generate_zone(sb_two_outs_s, "Changeup", "UCSB Changeups Swung At", "purple")
+generate_zone(two_outs_s, "Changeup", "Opp Changeups Swung At", "purple")
+generate_zone(sb_two_outs_s, "Sinker", "UCSB Sinkers Swung At", "orange")
+generate_zone(two_outs_s, "Sinker", "Opp Sinkers Swung At", "orange")
+```
+
+#### Takes
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_two_outs_t, "Fastball", "UCSB Fastballs Taken", "red")
+generate_zone(two_outs_t, "Fastball", "Opp Fastballs Taken", "red")
+generate_zone(sb_two_outs_t, "Curveball", "UCSB Curveballs Taken", "blue")
+generate_zone(two_outs_t, "Curveball", "Opp Curveballs Taken", "blue")
+generate_zone(sb_two_outs_t, "Slider", "UCSB Sliders Taken", "green")
+generate_zone(two_outs_t, "Slider", "Opp Sliders Taken", "green")
+generate_zone(sb_two_outs_t, "Changeup", "UCSB Changeups Taken", "purple")
+generate_zone(two_outs_t, "Changeup", "Opp Changeups Taken", "purple")
+generate_zone(sb_two_outs_t, "Sinker", "UCSB Sinkers Taken", "orange")
+generate_zone(two_outs_t, "Sinker", "Opp Sinkers Taken", "orange")
+```
+
+#### Misses
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_two_outs_m, "Fastball", "UCSB Fastballs Missed", "red")
+generate_zone(two_outs_m, "Fastball", "Opp Fastballs Missed", "red")
+generate_zone(sb_two_outs_m, "Curveball", "UCSB Curveballs Missed", "blue")
+generate_zone(two_outs_m, "Curveball", "Opp Curveballs Missed", "blue")
+generate_zone(sb_two_outs_m, "Slider", "UCSB Sliders Missed", "green")
+generate_zone(two_outs_m, "Slider", "Opp Sliders Missed", "green")
+generate_zone(sb_two_outs_m, "Changeup", "UCSB Changeups Missed", "purple")
+generate_zone(two_outs_m, "Changeup", "Opp Changeups Missed", "purple")
+generate_zone(sb_two_outs_m, "Sinker", "UCSB Sinkers Missed", "orange")
+generate_zone(two_outs_m, "Sinker", "Opp Sinkers Missed", "orange")
+```
+
+
+
+## Count Situation
+
+```{r}
+sb_first_pitch_s <- sb_first_pitch[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sb_first_pitch$pitch_result), ]
+sb_first_pitch_m <- sb_first_pitch[grep("Swinging|Missed", sb_first_pitch$pitch_result), ]
+sb_first_pitch_t <- filter(sb_first_pitch, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+sb_two_strikes_s <- sb_two_strikes[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", sb_two_strikes$pitch_result), ]
+sb_two_strikes_m <- sb_two_strikes[grep("Swinging|Missed", sb_two_strikes$pitch_result), ]
+sb_two_strikes_t <- filter(sb_two_strikes, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+first_pitch_s <- first_pitch[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", first_pitch$pitch_result), ]
+first_pitch_m <- first_pitch[grep("Swinging|Missed", first_pitch$pitch_result), ]
+first_pitch_t <- filter(first_pitch, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+
+two_strikes_s <- two_strikes[grep("Single|Double|Triple|Home Run|Sac|Fielder's|Catcher|Reached|Pop Out|Fly Out|Ground Out|Line Out|Swinging|Foul|Bunt", two_strikes$pitch_result), ]
+two_strikes_m <- two_strikes[grep("Swinging|Missed", two_strikes$pitch_result), ]
+two_strikes_t <- filter(two_strikes, pitch_result %in% c("Strike Looking", "Strikeout (Looking)", "Ball", "Hit By Pitch", "Walk"))
+```
+
+
+```{r}
+sb_first_pitch_stats <- generate_stats(sb_first_pitch)
+sb_first_pitch_pitch_stats <- stats_by_pitch(sb_first_pitch)
+sb_two_strikes_stats <- generate_stats(sb_two_strikes)
+sb_two_strikes_pitch_stats <- stats_by_pitch(sb_two_strikes)
+
+first_pitch_stats <- generate_stats(first_pitch)
+first_pitch_pitch_stats <- stats_by_pitch(first_pitch)
+two_strikes_stats <- generate_stats(two_strikes)
+two_strikes_pitch_stats <- stats_by_pitch(two_strikes)
+
+labels <- c("Situation", "Swing %", "Take %", "Whiff %", "Chase %", "In-Zone Swing %", "In-Zone Whiff %")
+sbdf <- data.frame(Situation = c("0-0", "2 Strikes"),
+                 Swing_Perc = c(sb_first_pitch_stats[[1]], sb_two_strikes_stats[[1]]),
+                 Take_Perc = c(sb_first_pitch_stats[[2]], sb_two_strikes_stats[[2]]),
+                 Whiff_Perc = c(sb_first_pitch_stats[[3]], sb_two_strikes_stats[[3]]),
+                 Chase_Perc = c(sb_first_pitch_stats[[4]], sb_two_strikes_stats[[4]]),
+                 Inzone_Swing_Perc = c(sb_first_pitch_stats[[5]], sb_two_strikes_stats[[5]]),
+                 Inzone_Whiff_Perc = c(sb_first_pitch_stats[[6]], sb_two_strikes_stats[[6]]))
+df <- data.frame(Situation = c("0-0", "2 Strikes"),
+                 Swing_Perc = c(first_pitch_stats[[1]], two_strikes_stats[[1]]),
+                 Take_Perc = c(first_pitch_stats[[2]], two_strikes_stats[[2]]),
+                 Whiff_Perc = c(first_pitch_stats[[3]], two_strikes_stats[[3]]),
+                 Chase_Perc = c(first_pitch_stats[[4]], two_strikes_stats[[4]]),
+                 Inzone_Swing_Perc = c(first_pitch_stats[[5]], two_strikes_stats[[5]]),
+                 Inzone_Whiff_Perc = c(first_pitch_stats[[6]], two_strikes_stats[[6]]))
+
+sbdf1 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(sb_first_pitch_pitch_stats[[1]], sb_first_pitch_pitch_stats[[7]], sb_first_pitch_pitch_stats[[13]], sb_first_pitch_pitch_stats[[19]], sb_first_pitch_pitch_stats[[25]]),
+                  n2 = c(sb_first_pitch_pitch_stats[[2]], sb_first_pitch_pitch_stats[[8]], sb_first_pitch_pitch_stats[[14]], sb_first_pitch_pitch_stats[[20]], sb_first_pitch_pitch_stats[[26]]),
+                  n3 = c(sb_first_pitch_pitch_stats[[3]], sb_first_pitch_pitch_stats[[9]], sb_first_pitch_pitch_stats[[15]], sb_first_pitch_pitch_stats[[21]], sb_first_pitch_pitch_stats[[27]]),
+                  n4 = c(sb_first_pitch_pitch_stats[[4]], sb_first_pitch_pitch_stats[[10]], sb_first_pitch_pitch_stats[[16]], sb_first_pitch_pitch_stats[[22]], sb_first_pitch_pitch_stats[[28]]),
+                  n5 = c(sb_first_pitch_pitch_stats[[5]], sb_first_pitch_pitch_stats[[11]], sb_first_pitch_pitch_stats[[17]], sb_first_pitch_pitch_stats[[23]], sb_first_pitch_pitch_stats[[29]]),
+                  n6 = c(sb_first_pitch_pitch_stats[[6]], sb_first_pitch_pitch_stats[[12]], sb_first_pitch_pitch_stats[[18]], sb_first_pitch_pitch_stats[[24]], sb_first_pitch_pitch_stats[[30]])
+                  )
+
+df1 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(first_pitch_pitch_stats[[1]], first_pitch_pitch_stats[[7]], first_pitch_pitch_stats[[13]], first_pitch_pitch_stats[[19]], first_pitch_pitch_stats[[25]]),
+                  n2 = c(first_pitch_pitch_stats[[2]], first_pitch_pitch_stats[[8]], first_pitch_pitch_stats[[14]], first_pitch_pitch_stats[[20]], first_pitch_pitch_stats[[26]]),
+                  n3 = c(first_pitch_pitch_stats[[3]], first_pitch_pitch_stats[[9]], first_pitch_pitch_stats[[15]], first_pitch_pitch_stats[[21]], first_pitch_pitch_stats[[27]]),
+                  n4 = c(first_pitch_pitch_stats[[4]], first_pitch_pitch_stats[[10]], first_pitch_pitch_stats[[16]], first_pitch_pitch_stats[[22]], first_pitch_pitch_stats[[28]]),
+                  n5 = c(first_pitch_pitch_stats[[5]], first_pitch_pitch_stats[[11]], first_pitch_pitch_stats[[17]], first_pitch_pitch_stats[[23]], first_pitch_pitch_stats[[29]]),
+                  n6 = c(first_pitch_pitch_stats[[6]], first_pitch_pitch_stats[[12]], first_pitch_pitch_stats[[18]], first_pitch_pitch_stats[[24]], first_pitch_pitch_stats[[30]])
+)
+
+sbdf2 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(sb_two_strikes_pitch_stats[[1]], sb_two_strikes_pitch_stats[[7]], sb_two_strikes_pitch_stats[[13]], sb_two_strikes_pitch_stats[[19]], sb_two_strikes_pitch_stats[[25]]),
+                  n2 = c(sb_two_strikes_pitch_stats[[2]], sb_two_strikes_pitch_stats[[8]], sb_two_strikes_pitch_stats[[14]], sb_two_strikes_pitch_stats[[20]], sb_two_strikes_pitch_stats[[26]]),
+                  n3 = c(sb_two_strikes_pitch_stats[[3]], sb_two_strikes_pitch_stats[[9]], sb_two_strikes_pitch_stats[[15]], sb_two_strikes_pitch_stats[[21]], sb_two_strikes_pitch_stats[[27]]),
+                  n4 = c(sb_two_strikes_pitch_stats[[4]], sb_two_strikes_pitch_stats[[10]], sb_two_strikes_pitch_stats[[16]], sb_two_strikes_pitch_stats[[22]], sb_two_strikes_pitch_stats[[28]]),
+                  n5 = c(sb_two_strikes_pitch_stats[[5]], sb_two_strikes_pitch_stats[[11]], sb_two_strikes_pitch_stats[[17]], sb_two_strikes_pitch_stats[[23]], sb_two_strikes_pitch_stats[[29]]),
+                  n6 = c(sb_two_strikes_pitch_stats[[6]], sb_two_strikes_pitch_stats[[12]], sb_two_strikes_pitch_stats[[18]], sb_two_strikes_pitch_stats[[24]], sb_two_strikes_pitch_stats[[30]])
+                  )
+
+df2 <- data.frame(Pitch = c("FB", "CB", "SL", "CH", "SI"),
+                  n1 = c(two_strikes_pitch_stats[[1]], two_strikes_pitch_stats[[7]], two_strikes_pitch_stats[[13]], two_strikes_pitch_stats[[19]], two_strikes_pitch_stats[[25]]),
+                  n2 = c(two_strikes_pitch_stats[[2]], two_strikes_pitch_stats[[8]], two_strikes_pitch_stats[[14]], two_strikes_pitch_stats[[20]], two_strikes_pitch_stats[[26]]),
+                  n3 = c(two_strikes_pitch_stats[[3]], two_strikes_pitch_stats[[9]], two_strikes_pitch_stats[[15]], two_strikes_pitch_stats[[21]], two_strikes_pitch_stats[[27]]),
+                  n4 = c(two_strikes_pitch_stats[[4]], two_strikes_pitch_stats[[10]], two_strikes_pitch_stats[[16]], two_strikes_pitch_stats[[22]], two_strikes_pitch_stats[[28]]),
+                  n5 = c(two_strikes_pitch_stats[[5]], two_strikes_pitch_stats[[11]], two_strikes_pitch_stats[[17]], two_strikes_pitch_stats[[23]], two_strikes_pitch_stats[[29]]),
+                  n6 = c(two_strikes_pitch_stats[[6]], two_strikes_pitch_stats[[12]], two_strikes_pitch_stats[[18]], two_strikes_pitch_stats[[24]], two_strikes_pitch_stats[[30]])
+)
+
+colnames(sbdf) <- labels
+colnames(df) <- labels
+colnames(sbdf1) <- labels1
+colnames(df1) <- labels1
+colnames(sbdf2) <- labels1
+colnames(df2) <- labels1
+
+kable(sbdf, caption = "UCSB Count Situations", digits = 2)
+kable(df, caption = "Opp Count Situations", digits = 2)
+kable(sbdf1, caption = "UCSB First Pitch", digits = 2)
+kable(df1, caption = "Opp First Pitch", digits = 2)
+kable(sbdf2, caption = "UCSB Two Strikes", digits = 2)
+kable(df2, caption = "Opp Two Strikes", digits = 2)
+```
+
+### 0-0
+
+#### Swings
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_first_pitch_s, "Fastball", "UCSB Fastballs Swung At", "red")
+generate_zone(first_pitch_s, "Fastball", "Opp Fastballs Swung At", "red")
+generate_zone(sb_first_pitch_s, "Curveball", "UCSB Curveballs Swung At", "blue")
+generate_zone(first_pitch_s, "Curveball", "Opp Curveballs Swung At", "blue")
+generate_zone(sb_first_pitch_s, "Slider", "UCSB Sliders Swung At", "green")
+generate_zone(first_pitch_s, "Slider", "Opp Sliders Swung At", "green")
+generate_zone(sb_first_pitch_s, "Changeup", "UCSB Changeups Swung At", "purple")
+generate_zone(first_pitch_s, "Changeup", "Opp Changeups Swung At", "purple")
+generate_zone(sb_first_pitch_s, "Sinker", "UCSB Sinkers Swung At", "orange")
+generate_zone(first_pitch_s, "Sinker", "Opp Sinkers Swung At", "orange")
+```
+
+#### Takes
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_first_pitch_t, "Fastball", "UCSB Fastballs Taken", "red")
+generate_zone(first_pitch_t, "Fastball", "Opp Fastballs Taken", "red")
+generate_zone(sb_first_pitch_t, "Curveball", "UCSB Curveballs Taken", "blue")
+generate_zone(first_pitch_t, "Curveball", "Opp Curveballs Taken", "blue")
+generate_zone(sb_first_pitch_t, "Slider", "UCSB Sliders Taken", "green")
+generate_zone(first_pitch_t, "Slider", "Opp Sliders Taken", "green")
+generate_zone(sb_first_pitch_t, "Changeup", "UCSB Changeups Taken", "purple")
+generate_zone(first_pitch_t, "Changeup", "Opp Changeups Taken", "purple")
+generate_zone(sb_first_pitch_t, "Sinker", "UCSB Sinkers Taken", "orange")
+generate_zone(first_pitch_t, "Sinker", "Opp Sinkers Taken", "orange")
+```
+
+#### Missed
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_first_pitch_m, "Fastball", "UCSB Fastballs Missed", "red")
+generate_zone(first_pitch_m, "Fastball", "Opp Fastballs Missed", "red")
+generate_zone(sb_first_pitch_m, "Curveball", "UCSB Curveballs Missed", "blue")
+generate_zone(first_pitch_m, "Curveball", "Opp Curveballs Missed", "blue")
+generate_zone(sb_first_pitch_m, "Slider", "UCSB Sliders Missed", "green")
+generate_zone(first_pitch_m, "Slider", "Opp Sliders Missed", "green")
+generate_zone(sb_first_pitch_m, "Changeup", "UCSB Changeups Missed", "purple")
+generate_zone(first_pitch_m, "Changeup", "Opp Changeups Missed", "purple")
+generate_zone(sb_first_pitch_m, "Sinker", "UCSB Sinkers Missed", "orange")
+generate_zone(first_pitch_m, "Sinker", "Opp Sinkers Missed", "orange")
+```
+
+### 2 Strikes
+
+#### Swings
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_two_strikes_s, "Fastball", "UCSB Fastballs Swung At", "red")
+generate_zone(two_strikes_s, "Fastball", "Opp Fastballs Swung At", "red")
+generate_zone(sb_two_strikes_s, "Curveball", "UCSB Curveballs Swung At", "blue")
+generate_zone(two_strikes_s, "Curveball", "Opp Curveballs Swung At", "blue")
+generate_zone(sb_two_strikes_s, "Slider", "UCSB Sliders Swung At", "green")
+generate_zone(two_strikes_s, "Slider", "Opp Sliders Swung At", "green")
+generate_zone(sb_two_strikes_s, "Changeup", "UCSB Changeups Swung At", "purple")
+generate_zone(two_strikes_s, "Changeup", "Opp Changeups Swung At", "purple")
+generate_zone(sb_two_strikes_s, "Sinker", "UCSB Sinkers Swung At", "orange")
+generate_zone(two_strikes_s, "Sinker", "Opp Sinkers Swung At", "orange")
+```
+
+#### Takes
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_two_strikes_t, "Fastball", "UCSB Fastballs Taken", "red")
+generate_zone(two_strikes_t, "Fastball", "Opp Fastballs Taken", "red")
+generate_zone(sb_two_strikes_t, "Curveball", "UCSB Curveballs Taken", "blue")
+generate_zone(two_strikes_t, "Curveball", "Opp Curveballs Taken", "blue")
+generate_zone(sb_two_strikes_t, "Slider", "UCSB Sliders Taken", "green")
+generate_zone(two_strikes_t, "Slider", "Opp Sliders Taken", "green")
+generate_zone(sb_two_strikes_t, "Changeup", "UCSB Changeups Taken", "purple")
+generate_zone(two_strikes_t, "Changeup", "Opp Changeups Taken", "purple")
+generate_zone(sb_two_strikes_t, "Sinker", "UCSB Sinkers Taken", "orange")
+generate_zone(two_strikes_t, "Sinker", "Opp Sinkers Taken", "orange")
+```
+
+#### Misses
+```{r warning=FALSE, out.width="50%", fig.show="hold"}
+generate_zone(sb_two_strikes_m, "Fastball", "UCSB Fastballs Missed", "red")
+generate_zone(two_strikes_m, "Fastball", "Opp Fastballs Missed", "red")
+generate_zone(sb_two_strikes_m, "Curveball", "UCSB Curveballs Missed", "blue")
+generate_zone(two_strikes_m, "Curveball", "Opp Curveballs Missed", "blue")
+generate_zone(sb_two_strikes_m, "Slider", "UCSB Sliders Missed", "green")
+generate_zone(two_strikes_m, "Slider", "Opp Sliders Missed", "green")
+generate_zone(sb_two_strikes_m, "Changeup", "UCSB Changeups Missed", "purple")
+generate_zone(two_strikes_m, "Changeup", "Opp Changeups Missed", "purple")
+generate_zone(sb_two_strikes_m, "Sinker", "UCSB Sinkers Missed", "orange")
+generate_zone(two_strikes_m, "Sinker", "Opp Sinkers Missed", "orange")
+```
